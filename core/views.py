@@ -1,20 +1,17 @@
 from decimal import Decimal
 
 from django.contrib import messages
-from django.contrib.auth import get_user_model, login, logout
+from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
-from .forms import (
-    MeterReadingForm,
-    PaymentReceiptForm,
-    UserLoginForm,
-    UserRegistrationForm,
-)
-from .models import Accrual, Announcement, Payment, Plot, UserProfile
+from .forms import LoginCodeForm, MeterReadingForm, PaymentReceiptForm, PhoneLoginForm
+from .models import Accrual, Announcement, Payment, Plot
+from .otp import LoginCodeError, create_and_send_login_code, verify_login_code
+from .sms import SmsSendError
 
 
 def accessible_plots(user):
@@ -35,15 +32,6 @@ def balance_for_plots(plots):
     return confirmed_payments - active_accruals
 
 
-def display_name(user):
-    if not user.is_authenticated:
-        return ''
-    profile = user_profile(user)
-    if profile and profile.full_name:
-        return profile.full_name
-    return user.get_full_name() or user.get_username()
-
-
 def user_profile(user):
     try:
         return user.profile
@@ -51,51 +39,21 @@ def user_profile(user):
         return None
 
 
-def authenticate_by_contact(identifier, password):
-    User = get_user_model()
-    identifier = identifier.strip()
-    user = (
-        User.objects.filter(email__iexact=identifier).first()
-        or User.objects.filter(profile__phone=identifier).first()
-        or User.objects.filter(username__iexact=identifier).first()
-    )
-    if user and user.check_password(password):
-        return user
-    return None
+def display_name(user):
+    if not user.is_authenticated:
+        return ''
+    profile = user_profile(user)
+    if profile:
+        return profile.full_name
+    return user.get_full_name() or user.get_username()
 
 
-def register_user(form):
-    User = get_user_model()
-    email = form.cleaned_data['email']
-    full_name = form.cleaned_data['full_name']
-    user = User.objects.create_user(
-        username=email,
-        email=email,
-        password=form.cleaned_data['password'],
-        first_name=full_name[:150],
-    )
-    UserProfile.objects.create(
-        user=user,
-        full_name=full_name,
-        phone=form.cleaned_data['phone'],
-    )
-    return user
-
-
-def home_tasks(user, plots, balance):
+def home_tasks(user, plots):
     if not user.is_authenticated:
         return []
     if not plots.exists():
-        return [
-            {
-                'title': 'Очікуйте підтвердження доступу',
-                'text': 'Адміністратор має привʼязати ваш акаунт до ділянки.',
-                'url': reverse('announcements'),
-                'button': 'Переглянути оголошення',
-            }
-        ]
-
-    tasks = [
+        return []
+    return [
         {
             'title': 'Передати показання лічильника',
             'text': 'Надішліть актуальні показання для своєї ділянки.',
@@ -115,53 +73,10 @@ def home_tasks(user, plots, balance):
             'button': 'Перевірити',
         },
     ]
-    if balance >= 0:
-        return tasks
-    return tasks
-
-
-def handle_home_auth(request):
-    login_form = UserLoginForm()
-    registration_form = UserRegistrationForm()
-
-    if request.method != 'POST':
-        return login_form, registration_form
-
-    action = request.POST.get('action')
-    if action == 'login':
-        login_form = UserLoginForm(request.POST)
-        if login_form.is_valid():
-            user = authenticate_by_contact(
-                login_form.cleaned_data['login'],
-                login_form.cleaned_data['password'],
-            )
-            if user:
-                login(request, user)
-                messages.success(request, 'Ви увійшли до акаунта.')
-                return None, None
-            login_form.add_error(None, 'Перевірте телефон, email або пароль.')
-
-    if action == 'register':
-        registration_form = UserRegistrationForm(request.POST)
-        if registration_form.is_valid():
-            user = register_user(registration_form)
-            login(request, user)
-            messages.success(
-                request,
-                'Акаунт створено. Доступ до ділянок зʼявиться після підтвердження адміністратором.',
-            )
-            return None, None
-
-    return login_form, registration_form
 
 
 def home(request):
-    auth_forms = handle_home_auth(request)
-    if auth_forms == (None, None):
-        return redirect('home')
-
     plots = accessible_plots(request.user) if request.user.is_authenticated else Plot.objects.none()
-    balance = balance_for_plots(plots) if request.user.is_authenticated else Decimal('0.00')
     critical_announcements = Announcement.objects.filter(
         is_published=True,
         kind=Announcement.Kind.CRITICAL,
@@ -172,31 +87,61 @@ def home(request):
     )[:6]
 
     context = {
-        'login_form': auth_forms[0],
-        'registration_form': auth_forms[1],
+        'phone_form': PhoneLoginForm(),
         'plots': plots,
-        'balance': balance,
         'profile_name': display_name(request.user),
-        'profile': user_profile(request.user) if request.user.is_authenticated else None,
         'critical_announcements': critical_announcements,
         'village_news': village_news,
-        'tasks': home_tasks(request.user, plots, balance),
+        'tasks': home_tasks(request.user, plots),
     }
     return render(request, 'core/home.html', context)
 
 
 def login_view(request):
+    if request.user.is_authenticated:
+        return redirect('dashboard')
+
     if request.method == 'POST':
-        form = UserLoginForm(request.POST)
+        form = PhoneLoginForm(request.POST)
         if form.is_valid():
-            user = authenticate_by_contact(form.cleaned_data['login'], form.cleaned_data['password'])
-            if user:
-                login(request, user)
-                return redirect(request.GET.get('next') or 'dashboard')
-            form.add_error(None, 'Перевірте телефон, email або пароль.')
+            try:
+                login_code = create_and_send_login_code(form.cleaned_data['phone'])
+            except (LoginCodeError, SmsSendError) as exc:
+                form.add_error(None, str(exc))
+            else:
+                request.session['login_code_id'] = login_code.id
+                request.session['login_phone'] = login_code.phone
+                messages.success(request, 'Ми надіслали одноразовий код на ваш телефон.')
+                return redirect('verify_login_code')
     else:
-        form = UserLoginForm()
+        form = PhoneLoginForm()
+
     return render(request, 'registration/login.html', {'form': form})
+
+
+def verify_login_code_view(request):
+    login_code_id = request.session.get('login_code_id')
+    phone = request.session.get('login_phone')
+    if not login_code_id:
+        messages.error(request, 'Спочатку введіть номер телефону.')
+        return redirect('login')
+
+    if request.method == 'POST':
+        form = LoginCodeForm(request.POST)
+        if form.is_valid():
+            try:
+                user = verify_login_code(login_code_id, form.cleaned_data['code'])
+            except LoginCodeError as exc:
+                form.add_error(None, str(exc))
+            else:
+                request.session.pop('login_code_id', None)
+                request.session.pop('login_phone', None)
+                login(request, user)
+                return redirect('dashboard')
+    else:
+        form = LoginCodeForm()
+
+    return render(request, 'registration/verify_code.html', {'form': form, 'phone': phone})
 
 
 def logout_view(request):

@@ -1,10 +1,10 @@
 {% extends 'base.html' %}
 
-{% block title %}Бахча - зручний кабінет селища{% endblock %}
+{% block title %}СТ «Економіст» - особистий кабінет{% endblock %}
 
 {% block content %}
 <div class="mb-4">
-    <h1 class="h2 fw-semibold mb-1">Бахча</h1>
+    <h1 class="h2 fw-semibold mb-1">СТ «Економіст»</h1>
     <p class="text-muted mb-0">Особистий кабінет для ділянок, оплат, лічильників та повідомлень селища.</p>
 </div>
 
@@ -13,16 +13,9 @@
         <div class="panel home-panel p-4">
             <h2 class="h5 mb-3">Профіль користувача</h2>
             {% if user.is_authenticated %}
-                <div class="d-flex align-items-center gap-3 mb-4">
-                    {% if profile.avatar %}
-                        <img class="avatar-circle" src="{{ profile.avatar.url }}" alt="Аватар користувача">
-                    {% else %}
-                        <div class="avatar-circle" aria-label="Аватар не встановлено"></div>
-                    {% endif %}
-                    <div>
-                        <div class="fw-semibold">{{ profile_name }}</div>
-                        <div class="text-muted small">Ваші дані та ділянки</div>
-                    </div>
+                <div class="mb-4">
+                    <div class="fw-semibold fs-5">{{ profile_name }}</div>
+                    <div class="text-muted small">Ваші дані та ділянки</div>
                 </div>
 
                 <div class="mb-4">
@@ -37,52 +30,18 @@
                 </div>
                 <a class="btn btn-primary btn-lg w-100" href="{% url 'dashboard' %}">Увійти до кабінету</a>
             {% else %}
-                <ul class="nav nav-tabs mb-3" id="authTabs" role="tablist">
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link {% if not registration_form.errors %}active{% endif %}" id="login-tab" data-bs-toggle="tab" data-bs-target="#login-pane" type="button" role="tab">Вхід</button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link {% if registration_form.errors %}active{% endif %}" id="register-tab" data-bs-toggle="tab" data-bs-target="#register-pane" type="button" role="tab">Створити акаунт</button>
-                    </li>
-                </ul>
-                <div class="tab-content">
-                    <div class="tab-pane fade {% if not registration_form.errors %}show active{% endif %}" id="login-pane" role="tabpanel" aria-labelledby="login-tab">
-                        <form method="post">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="login">
-                            {{ login_form.non_field_errors }}
-                            <div class="mb-3">
-                                <label class="form-label" for="{{ login_form.login.id_for_label }}">Телефон або email</label>
-                                {{ login_form.login }}
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label" for="{{ login_form.password.id_for_label }}">Пароль</label>
-                                {{ login_form.password }}
-                            </div>
-                            <button class="btn btn-primary w-100" type="submit">Увійти</button>
-                        </form>
+                <form method="post" action="{% url 'login' %}">
+                    {% csrf_token %}
+                    {{ phone_form.non_field_errors }}
+                    <div class="mb-3">
+                        <label class="form-label" for="{{ phone_form.phone.id_for_label }}">Номер телефону</label>
+                        {{ phone_form.phone }}
                     </div>
-                    <div class="tab-pane fade {% if registration_form.errors %}show active{% endif %}" id="register-pane" role="tabpanel" aria-labelledby="register-tab">
-                        <form method="post">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="register">
-                            {{ registration_form.non_field_errors }}
-                            {% for field in registration_form %}
-                                <div class="mb-3">
-                                    <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
-                                    {{ field }}
-                                    {% for error in field.errors %}
-                                        <div class="text-danger small mt-1">{{ error }}</div>
-                                    {% endfor %}
-                                </div>
-                            {% endfor %}
-                            <button class="btn btn-outline-primary w-100" type="submit">Створити акаунт</button>
-                            <p class="text-muted small mt-3 mb-0">
-                                Доступ до ділянок зʼявиться після підтвердження адміністратором або привʼязки до вже внесених даних.
-                            </p>
-                        </form>
-                    </div>
-                </div>
+                    <button class="btn btn-primary w-100" type="submit">Отримати SMS-код</button>
+                    <p class="text-muted small mt-3 mb-0">
+                        Увійти можуть лише користувачі, яких адміністратор заздалегідь додав і привʼязав до ділянки.
+                    </p>
+                </form>
             {% endif %}
         </div>
     </div>

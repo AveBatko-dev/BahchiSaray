@@ -1,40 +1,73 @@
 from decimal import Decimal
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
 from django.db.models import Sum
 from django.utils import timezone
 
 
-class UserProfile(models.Model):
-    class AccessStatus(models.TextChoices):
-        PENDING = 'pending', 'Очікує підтвердження'
-        APPROVED = 'approved', 'Підтверджено'
-        REJECTED = 'rejected', 'Відхилено'
+def normalize_phone(phone):
+    phone = (phone or '').strip()
+    for char in (' ', '-', '(', ')'):
+        phone = phone.replace(char, '')
+    return phone
 
+
+class UserProfile(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='profile',
         verbose_name='користувач',
+        null=True,
+        blank=True,
     )
-    full_name = models.CharField('ПІБ', max_length=255)
-    phone = models.CharField('телефон', max_length=30, blank=True)
-    avatar = models.FileField('аватар', upload_to='avatars/', blank=True)
-    access_status = models.CharField(
-        'статус доступу',
-        max_length=20,
-        choices=AccessStatus.choices,
-        default=AccessStatus.PENDING,
-    )
+    last_name = models.CharField('прізвище', max_length=100, default='')
+    first_name = models.CharField('імʼя', max_length=100, default='')
+    middle_name = models.CharField('по батькові', max_length=100, blank=True)
+    phone = models.CharField('номер телефону', max_length=30, db_index=True)
     created_at = models.DateTimeField('створено', auto_now_add=True)
 
     class Meta:
+        ordering = ['last_name', 'first_name']
         verbose_name = 'профіль користувача'
         verbose_name_plural = 'профілі користувачів'
 
+    def save(self, *args, **kwargs):
+        self.phone = normalize_phone(self.phone)
+        if not self.user_id and self.phone:
+            User = get_user_model()
+            username = self.phone
+            suffix = 1
+            while User.objects.filter(username=username).exists():
+                suffix += 1
+                username = f'{self.phone}-{suffix}'
+            self.user = User.objects.create_user(username=username)
+            self.user.set_unusable_password()
+            self.user.is_active = True
+            self.user.save(update_fields=['password', 'is_active'])
+        if self.user_id:
+            self.user.first_name = self.first_name
+            self.user.last_name = self.last_name
+            self.user.save(update_fields=['first_name', 'last_name'])
+        super().save(*args, **kwargs)
+
+    @property
+    def full_name(self):
+        return ' '.join(
+            part for part in [self.last_name, self.first_name, self.middle_name] if part
+        )
+
+    @property
+    def linked_plots(self):
+        if not self.user_id:
+            return Plot.objects.none()
+        return Plot.objects.filter(memberships__user=self.user).distinct()
+
     def __str__(self):
-        return self.full_name or self.user.get_username()
+        return self.full_name or self.phone
 
 
 class Plot(models.Model):
@@ -110,11 +143,54 @@ class PlotMembership(models.Model):
 
     class Meta:
         unique_together = ('user', 'plot')
-        verbose_name = 'звʼязок користувача з ділянкою'
-        verbose_name_plural = 'звʼязки користувачів з ділянками'
+        verbose_name = 'привʼязка користувача до ділянки'
+        verbose_name_plural = 'привʼязки користувачів до ділянок'
 
     def __str__(self):
         return f'{self.user} - {self.plot}'
+
+
+class LoginCode(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='login_codes',
+        verbose_name='користувач',
+    )
+    phone = models.CharField('номер телефону', max_length=30, db_index=True)
+    code_hash = models.CharField('хеш коду', max_length=255)
+    created_at = models.DateTimeField('створено', default=timezone.now)
+    expires_at = models.DateTimeField('діє до')
+    used = models.BooleanField('використано', default=False)
+    used_at = models.DateTimeField('час використання', null=True, blank=True)
+    attempts = models.PositiveSmallIntegerField('кількість спроб', default=0)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'одноразовий код входу'
+        verbose_name_plural = 'одноразові коди входу'
+
+    def set_code(self, code):
+        self.code_hash = make_password(code)
+
+    def check_code(self, code):
+        return check_password(code, self.code_hash)
+
+    @property
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
+
+    @property
+    def is_active(self):
+        return not self.used and not self.is_expired
+
+    def mark_used(self):
+        self.used = True
+        self.used_at = timezone.now()
+        self.save(update_fields=['used', 'used_at'])
+
+    def __str__(self):
+        return f'{self.phone} - {self.created_at:%Y-%m-%d %H:%M}'
 
 
 class Accrual(models.Model):

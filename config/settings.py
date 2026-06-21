@@ -10,10 +10,25 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def load_dotenv(path):
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding='utf-8').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
@@ -123,3 +138,14 @@ MEDIA_ROOT = BASE_DIR / 'media'
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'dashboard'
 LOGOUT_REDIRECT_URL = 'home'
+
+SMS_BACKEND = os.environ.get('SMS_BACKEND', 'console')
+SMS_PROVIDER_URL = os.environ.get('SMS_PROVIDER_URL', '')
+SMS_API_KEY = os.environ.get('SMS_API_KEY', '')
+SMS_SENDER = os.environ.get('SMS_SENDER', 'Economist')
+SMS_TIMEOUT_SECONDS = int(os.environ.get('SMS_TIMEOUT_SECONDS', '10'))
+
+LOGIN_CODE_TTL_MINUTES = int(os.environ.get('LOGIN_CODE_TTL_MINUTES', '5'))
+LOGIN_CODE_RESEND_COOLDOWN_SECONDS = int(os.environ.get('LOGIN_CODE_RESEND_COOLDOWN_SECONDS', '60'))
+LOGIN_CODE_DAILY_LIMIT = int(os.environ.get('LOGIN_CODE_DAILY_LIMIT', '5'))
+LOGIN_CODE_MAX_ATTEMPTS = int(os.environ.get('LOGIN_CODE_MAX_ATTEMPTS', '3'))

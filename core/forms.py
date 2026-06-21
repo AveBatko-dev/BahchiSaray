@@ -1,7 +1,6 @@
 from django import forms
-from django.contrib.auth import get_user_model
 
-from .models import Meter, MeterReading, PaymentReceipt, Plot
+from .models import Meter, MeterReading, PaymentReceipt, Plot, normalize_phone
 
 
 class BootstrapFormMixin:
@@ -16,43 +15,37 @@ class BootstrapFormMixin:
                 widget.attrs.setdefault('class', 'form-control')
 
 
-class UserLoginForm(BootstrapFormMixin, forms.Form):
-    login = forms.CharField(label='Телефон або email', max_length=255)
-    password = forms.CharField(label='Пароль', widget=forms.PasswordInput)
+class PhoneLoginForm(BootstrapFormMixin, forms.Form):
+    phone = forms.CharField(label='Номер телефону', max_length=30)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['login'].widget.attrs.update({'autocomplete': 'username'})
-        self.fields['password'].widget.attrs.update({'autocomplete': 'current-password'})
+        self.fields['phone'].widget.attrs.update({
+            'autocomplete': 'tel',
+            'placeholder': '+380...',
+        })
         self.apply_bootstrap()
-
-
-class UserRegistrationForm(BootstrapFormMixin, forms.Form):
-    full_name = forms.CharField(label='ПІБ', max_length=255)
-    phone = forms.CharField(label='Телефон', max_length=30)
-    email = forms.EmailField(label='Email')
-    password = forms.CharField(label='Пароль', widget=forms.PasswordInput)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields['full_name'].widget.attrs.update({'autocomplete': 'name'})
-        self.fields['phone'].widget.attrs.update({'autocomplete': 'tel'})
-        self.fields['email'].widget.attrs.update({'autocomplete': 'email'})
-        self.fields['password'].widget.attrs.update({'autocomplete': 'new-password'})
-        self.apply_bootstrap()
-
-    def clean_email(self):
-        email = self.cleaned_data['email'].lower()
-        User = get_user_model()
-        if User.objects.filter(email__iexact=email).exists():
-            raise forms.ValidationError('Користувач з таким email вже існує.')
-        return email
 
     def clean_phone(self):
-        phone = self.cleaned_data['phone'].strip()
+        phone = normalize_phone(self.cleaned_data['phone'])
         if not phone:
-            raise forms.ValidationError('Вкажіть телефон.')
+            raise forms.ValidationError('Вкажіть номер телефону.')
         return phone
+
+
+class LoginCodeForm(BootstrapFormMixin, forms.Form):
+    code = forms.CharField(label='Одноразовий код', max_length=12)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['code'].widget.attrs.update({
+            'autocomplete': 'one-time-code',
+            'inputmode': 'numeric',
+        })
+        self.apply_bootstrap()
+
+    def clean_code(self):
+        return self.cleaned_data['code'].strip()
 
 
 class MeterReadingForm(BootstrapFormMixin, forms.ModelForm):

@@ -1,21 +1,34 @@
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
+from django.contrib.auth.models import Group, User
+from django.core.exceptions import ObjectDoesNotExist
 
-from .models import (
-    Accrual,
-    Announcement,
-    Meter,
-    MeterReading,
-    Payment,
-    PaymentReceipt,
-    Plot,
-    PlotMembership,
-    UserProfile,
-)
+from .models import Plot, PlotMembership, UserProfile
 
 
-admin.site.site_header = 'Адмінка Бахча'
-admin.site.site_title = 'Бахча'
-admin.site.index_title = 'Керування даними'
+admin.site.site_header = 'Адмінка СТ «Економіст»'
+admin.site.site_title = 'СТ «Економіст»'
+admin.site.index_title = 'Основні дані'
+
+User._meta.verbose_name = 'користувач'
+User._meta.verbose_name_plural = 'користувачі'
+
+try:
+    admin.site.unregister(Group)
+except admin.sites.NotRegistered:
+    pass
+
+try:
+    admin.site.unregister(User)
+except admin.sites.NotRegistered:
+    pass
+
+
+class UserProfileInline(admin.StackedInline):
+    model = UserProfile
+    can_delete = False
+    extra = 0
+    fields = ('last_name', 'first_name', 'middle_name', 'phone')
 
 
 class PlotMembershipInline(admin.TabularInline):
@@ -23,69 +36,83 @@ class PlotMembershipInline(admin.TabularInline):
     extra = 1
 
 
-class MeterInline(admin.TabularInline):
-    model = Meter
-    extra = 1
+def profile_for(user):
+    try:
+        return user.profile
+    except ObjectDoesNotExist:
+        return None
+
+
+@admin.register(User)
+class UserAdmin(DjangoUserAdmin):
+    inlines = (UserProfileInline, PlotMembershipInline)
+    list_display = (
+        'profile_last_name',
+        'profile_first_name',
+        'profile_middle_name',
+        'profile_phone',
+        'linked_plots',
+        'is_staff',
+    )
+    search_fields = (
+        'profile__last_name',
+        'profile__first_name',
+        'profile__middle_name',
+        'profile__phone',
+        'username',
+    )
+
+    @admin.display(description='прізвище', ordering='profile__last_name')
+    def profile_last_name(self, obj):
+        profile = profile_for(obj)
+        return profile.last_name if profile else ''
+
+    @admin.display(description='імʼя', ordering='profile__first_name')
+    def profile_first_name(self, obj):
+        profile = profile_for(obj)
+        return profile.first_name if profile else ''
+
+    @admin.display(description='по батькові', ordering='profile__middle_name')
+    def profile_middle_name(self, obj):
+        profile = profile_for(obj)
+        return profile.middle_name if profile else ''
+
+    @admin.display(description='номер телефону', ordering='profile__phone')
+    def profile_phone(self, obj):
+        profile = profile_for(obj)
+        return profile.phone if profile else ''
+
+    @admin.display(description='привʼязані ділянки')
+    def linked_plots(self, obj):
+        plots = Plot.objects.filter(memberships__user=obj).order_by('number')
+        return ', '.join(plot.number for plot in plots) or '-'
 
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ('full_name', 'phone', 'user', 'access_status', 'created_at')
-    list_filter = ('access_status',)
-    search_fields = ('full_name', 'phone', 'user__email', 'user__username')
+    fields = ('last_name', 'first_name', 'middle_name', 'phone')
+    list_display = ('last_name', 'first_name', 'middle_name', 'phone', 'linked_plots')
+    search_fields = ('last_name', 'first_name', 'middle_name', 'phone')
+
+    @admin.display(description='привʼязані ділянки')
+    def linked_plots(self, obj):
+        return ', '.join(plot.number for plot in obj.linked_plots.order_by('number')) or '-'
 
 
 @admin.register(Plot)
 class PlotAdmin(admin.ModelAdmin):
-    list_display = ('number', 'area', 'owner_name', 'balance', 'balance_state')
+    list_display = ('number', 'area', 'owner_name')
     search_fields = ('number', 'owner_name', 'address')
-    inlines = (PlotMembershipInline, MeterInline)
 
 
 @admin.register(PlotMembership)
 class PlotMembershipAdmin(admin.ModelAdmin):
     list_display = ('user', 'plot', 'role', 'created_at')
     list_filter = ('role',)
-    search_fields = ('user__username', 'user__first_name', 'user__last_name', 'plot__number')
-
-
-@admin.register(Accrual)
-class AccrualAdmin(admin.ModelAdmin):
-    list_display = ('plot', 'title', 'amount', 'charged_at', 'status')
-    list_filter = ('status', 'charged_at')
-    search_fields = ('plot__number', 'title', 'period')
-
-
-@admin.register(Payment)
-class PaymentAdmin(admin.ModelAdmin):
-    list_display = ('plot', 'user', 'amount', 'paid_at', 'method', 'status')
-    list_filter = ('status', 'method', 'paid_at')
-    search_fields = ('plot__number', 'user__username', 'comment')
-
-
-@admin.register(Meter)
-class MeterAdmin(admin.ModelAdmin):
-    list_display = ('plot', 'kind', 'number', 'unit', 'is_active')
-    list_filter = ('kind', 'is_active')
-    search_fields = ('plot__number', 'number')
-
-
-@admin.register(MeterReading)
-class MeterReadingAdmin(admin.ModelAdmin):
-    list_display = ('meter', 'user', 'value', 'submitted_at', 'status')
-    list_filter = ('status', 'submitted_at')
-    search_fields = ('meter__number', 'meter__plot__number', 'user__username')
-
-
-@admin.register(PaymentReceipt)
-class PaymentReceiptAdmin(admin.ModelAdmin):
-    list_display = ('plot', 'user', 'amount', 'paid_at', 'method', 'status', 'created_at')
-    list_filter = ('status', 'method', 'paid_at')
-    search_fields = ('plot__number', 'user__username', 'comment')
-
-
-@admin.register(Announcement)
-class AnnouncementAdmin(admin.ModelAdmin):
-    list_display = ('title', 'kind', 'topic', 'published_at', 'is_published')
-    list_filter = ('kind', 'topic', 'is_published', 'published_at')
-    search_fields = ('title', 'text')
+    search_fields = (
+        'user__profile__last_name',
+        'user__profile__first_name',
+        'user__profile__middle_name',
+        'user__profile__phone',
+        'plot__number',
+    )
