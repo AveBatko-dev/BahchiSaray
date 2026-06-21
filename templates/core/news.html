@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+
+{% block title %}Новини селища - Бахча{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h1 class="h2 mb-1">Новини селища</h1>
+    <div class="text-muted">Інфраструктура, магазини, пошта, дороги, вода, електрика, події та загальні повідомлення</div>
+</div>
+
+<div class="row g-3">
+    {% for item in news_items %}
+        <div class="col-md-6 col-xl-4">
+            <article class="panel p-4 h-100">
+                <div class="d-flex justify-content-between gap-2 mb-3">
+                    <span class="status-pill">{{ item.get_topic_display }}</span>
+                    <span class="text-muted small">{{ item.published_at }}</span>
+                </div>
+                <h2 class="h5">{{ item.title }}</h2>
+                <p class="mb-0">{{ item.text|linebreaksbr }}</p>
+            </article>
+        </div>
+    {% empty %}
+        <div class="col-12">
+            <div class="panel p-4 text-muted">Новин поки немає.</div>
+        </div>
+    {% endfor %}
+</div>
+{% endblock %}

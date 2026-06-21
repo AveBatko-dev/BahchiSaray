@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="uk" data-bs-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Бахча{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --page-bg: #f5f7fa;
+            --panel-bg: #ffffff;
+            --soft-border: rgba(31, 41, 55, 0.1);
+            --muted-panel: #eef5f0;
+            --accent: #247a4a;
+            --critical-bg: #fff0ef;
+            --critical-border: #dc3545;
+        }
+
+        [data-bs-theme="dark"] {
+            --page-bg: #111827;
+            --panel-bg: #182231;
+            --soft-border: rgba(255, 255, 255, 0.12);
+            --muted-panel: #1e2b22;
+            --accent: #61c58a;
+            --critical-bg: #321b20;
+            --critical-border: #ff6b7a;
+        }
+
+        body {
+            background: var(--page-bg);
+        }
+
+        .navbar {
+            border-bottom: 1px solid var(--soft-border);
+        }
+
+        .page-shell {
+            max-width: 1240px;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--soft-border);
+            border-radius: 8px;
+        }
+
+        .home-panel {
+            min-height: 100%;
+        }
+
+        .avatar-circle {
+            width: 82px;
+            height: 82px;
+            border-radius: 50%;
+            border: 2px solid var(--soft-border);
+            background: var(--muted-panel);
+            object-fit: cover;
+        }
+
+        .calm-state {
+            background: var(--muted-panel);
+            border-radius: 8px;
+        }
+
+        .calm-mark {
+            width: 58px;
+            height: 58px;
+            border-radius: 50%;
+            border: 8px solid rgba(36, 122, 74, 0.18);
+            position: relative;
+        }
+
+        .calm-mark::after {
+            content: "";
+            position: absolute;
+            inset: 13px;
+            border-radius: 50%;
+            background: var(--accent);
+        }
+
+        .critical-item {
+            border-left: 4px solid var(--critical-border);
+            background: var(--critical-bg);
+            border-radius: 8px;
+        }
+
+        .task-row {
+            border: 1px solid var(--soft-border);
+            border-radius: 8px;
+        }
+
+        .status-pill {
+            border-radius: 999px;
+            padding: 0.25rem 0.65rem;
+            font-size: 0.875rem;
+            background: var(--muted-panel);
+        }
+
+        .theme-toggle {
+            white-space: nowrap;
+        }
+
+        @media (max-width: 575.98px) {
+            .page-shell {
+                padding-left: 0.85rem;
+                padding-right: 0.85rem;
+            }
+
+            .table-responsive {
+                font-size: 0.92rem;
+            }
+
+            .navbar .btn,
+            .navbar .nav-link {
+                width: 100%;
+                text-align: left;
+            }
+        }
+    </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg bg-body">
+    <div class="container page-shell">
+        <a class="navbar-brand fw-semibold" href="{% url 'home' %}">Бахча</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-expanded="false" aria-label="Меню">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="mainNav">
+            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                <li class="nav-item"><a class="nav-link" href="{% url 'home' %}">Головна</a></li>
+                <li class="nav-item"><a class="nav-link" href="{% url 'dashboard' %}">Кабінет</a></li>
+                <li class="nav-item"><a class="nav-link" href="{% url 'finance' %}">Фінанси</a></li>
+                <li class="nav-item"><a class="nav-link" href="{% url 'submit_meter_reading' %}">Показання</a></li>
+                <li class="nav-item"><a class="nav-link" href="{% url 'upload_receipt' %}">Квитанції</a></li>
+                <li class="nav-item"><a class="nav-link" href="{% url 'announcements' %}">Оголошення</a></li>
+                <li class="nav-item"><a class="nav-link" href="{% url 'news' %}">Новини</a></li>
+                {% if user.is_staff %}
+                    <li class="nav-item"><a class="nav-link" href="{% url 'admin:index' %}">Адмінка</a></li>
+                {% endif %}
+            </ul>
+            <div class="d-flex flex-column flex-lg-row gap-2 align-items-lg-center">
+                <button class="btn btn-outline-secondary btn-sm theme-toggle" type="button" id="themeToggle">Темна тема</button>
+                {% if user.is_authenticated %}
+                    <span class="text-muted small">{{ user.get_full_name|default:user.username }}</span>
+                    <form method="post" action="{% url 'logout' %}">
+                        {% csrf_token %}
+                        <button class="btn btn-outline-secondary btn-sm" type="submit">Вийти</button>
+                    </form>
+                {% else %}
+                    <a class="btn btn-outline-primary btn-sm" href="{% url 'login' %}">Увійти</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</nav>
+
+<main class="container page-shell py-4 py-lg-5">
+    {% if messages %}
+        <div class="mb-4">
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags|default:'info' }} mb-2" role="alert">{{ message }}</div>
+            {% endfor %}
+        </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    (function () {
+        const root = document.documentElement;
+        const button = document.getElementById('themeToggle');
+        const savedTheme = localStorage.getItem('bahcha-theme') || 'light';
+
+        function applyTheme(theme) {
+            root.setAttribute('data-bs-theme', theme);
+            if (button) {
+                button.textContent = theme === 'dark' ? 'Світла тема' : 'Темна тема';
+            }
+        }
+
+        applyTheme(savedTheme);
+        if (button) {
+            button.addEventListener('click', function () {
+                const nextTheme = root.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
+                localStorage.setItem('bahcha-theme', nextTheme);
+                applyTheme(nextTheme);
+            });
+        }
+    })();
+</script>
+</body>
+</html>

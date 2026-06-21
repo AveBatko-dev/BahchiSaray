@@ -1,0 +1,158 @@
+{% extends 'base.html' %}
+
+{% block title %}Бахча - зручний кабінет селища{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h1 class="h2 fw-semibold mb-1">Бахча</h1>
+    <p class="text-muted mb-0">Особистий кабінет для ділянок, оплат, лічильників та повідомлень селища.</p>
+</div>
+
+<section class="row g-4 align-items-stretch mb-5">
+    <div class="col-lg-4">
+        <div class="panel home-panel p-4">
+            <h2 class="h5 mb-3">Профіль користувача</h2>
+            {% if user.is_authenticated %}
+                <div class="d-flex align-items-center gap-3 mb-4">
+                    {% if profile.avatar %}
+                        <img class="avatar-circle" src="{{ profile.avatar.url }}" alt="Аватар користувача">
+                    {% else %}
+                        <div class="avatar-circle" aria-label="Аватар не встановлено"></div>
+                    {% endif %}
+                    <div>
+                        <div class="fw-semibold">{{ profile_name }}</div>
+                        <div class="text-muted small">Ваші дані та ділянки</div>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <div class="text-muted small mb-2">Ділянки</div>
+                    <div class="d-flex flex-wrap gap-2">
+                        {% for plot in plots %}
+                            <a class="btn btn-outline-secondary btn-sm" href="{% url 'plot_detail' plot.pk %}">Ділянка {{ plot.number }}</a>
+                        {% empty %}
+                            <span class="text-muted">Ділянки ще не привʼязані.</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                <a class="btn btn-primary btn-lg w-100" href="{% url 'dashboard' %}">Увійти до кабінету</a>
+            {% else %}
+                <ul class="nav nav-tabs mb-3" id="authTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link {% if not registration_form.errors %}active{% endif %}" id="login-tab" data-bs-toggle="tab" data-bs-target="#login-pane" type="button" role="tab">Вхід</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link {% if registration_form.errors %}active{% endif %}" id="register-tab" data-bs-toggle="tab" data-bs-target="#register-pane" type="button" role="tab">Створити акаунт</button>
+                    </li>
+                </ul>
+                <div class="tab-content">
+                    <div class="tab-pane fade {% if not registration_form.errors %}show active{% endif %}" id="login-pane" role="tabpanel" aria-labelledby="login-tab">
+                        <form method="post">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="login">
+                            {{ login_form.non_field_errors }}
+                            <div class="mb-3">
+                                <label class="form-label" for="{{ login_form.login.id_for_label }}">Телефон або email</label>
+                                {{ login_form.login }}
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label" for="{{ login_form.password.id_for_label }}">Пароль</label>
+                                {{ login_form.password }}
+                            </div>
+                            <button class="btn btn-primary w-100" type="submit">Увійти</button>
+                        </form>
+                    </div>
+                    <div class="tab-pane fade {% if registration_form.errors %}show active{% endif %}" id="register-pane" role="tabpanel" aria-labelledby="register-tab">
+                        <form method="post">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="register">
+                            {{ registration_form.non_field_errors }}
+                            {% for field in registration_form %}
+                                <div class="mb-3">
+                                    <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                                    {{ field }}
+                                    {% for error in field.errors %}
+                                        <div class="text-danger small mt-1">{{ error }}</div>
+                                    {% endfor %}
+                                </div>
+                            {% endfor %}
+                            <button class="btn btn-outline-primary w-100" type="submit">Створити акаунт</button>
+                            <p class="text-muted small mt-3 mb-0">
+                                Доступ до ділянок зʼявиться після підтвердження адміністратором або привʼязки до вже внесених даних.
+                            </p>
+                        </form>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="panel home-panel p-4">
+            <h2 class="h5 mb-3">Важливі оголошення</h2>
+            {% for item in critical_announcements %}
+                <article class="critical-item p-3 mb-3">
+                    <div class="small text-muted mb-1">{{ item.published_at }}</div>
+                    <h3 class="h6 mb-2">{{ item.title }}</h3>
+                    <p class="mb-0">{{ item.text|linebreaksbr }}</p>
+                </article>
+            {% empty %}
+                <div class="calm-state p-4 text-center">
+                    <div class="calm-mark mx-auto mb-3" aria-hidden="true"></div>
+                    <h3 class="h5 mb-2">Все як завжди</h3>
+                    <p class="text-muted mb-0">Критичних повідомлень немає. Можна спокійно користуватися кабінетом.</p>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="panel home-panel p-4">
+            <h2 class="h5 mb-3">Що потрібно зробити</h2>
+            {% if user.is_authenticated %}
+                {% for task in tasks %}
+                    <div class="task-row p-3 mb-3">
+                        <h3 class="h6 mb-1">{{ task.title }}</h3>
+                        <p class="text-muted small mb-3">{{ task.text }}</p>
+                        <a class="btn btn-outline-primary btn-sm" href="{{ task.url }}">{{ task.button }}</a>
+                    </div>
+                {% empty %}
+                    <div class="text-muted">Наразі нічого не потрібно робити</div>
+                {% endfor %}
+            {% else %}
+                <div class="calm-state p-4">
+                    <p class="mb-0 text-muted">Після входу тут будуть особисті завдання: показання, квитанції, баланс та інші актуальні дії.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section>
+    <div class="d-flex flex-wrap justify-content-between gap-2 align-items-end mb-3">
+        <div>
+            <h2 class="h4 mb-1">Новини селища</h2>
+            <div class="text-muted">Інфраструктура, магазини, пошта, дороги, вода, електрика та події</div>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm" href="{% url 'news' %}">Усі новини</a>
+    </div>
+    <div class="row g-3">
+        {% for item in village_news %}
+            <div class="col-md-6 col-xl-4">
+                <article class="panel p-3 h-100">
+                    <div class="d-flex justify-content-between gap-2 mb-2">
+                        <span class="status-pill">{{ item.get_topic_display }}</span>
+                        <span class="text-muted small">{{ item.published_at }}</span>
+                    </div>
+                    <h3 class="h6">{{ item.title }}</h3>
+                    <p class="text-muted mb-0">{{ item.text|truncatechars:130 }}</p>
+                </article>
+            </div>
+        {% empty %}
+            <div class="col-12">
+                <div class="panel p-4 text-muted">Новин поки немає.</div>
+            </div>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

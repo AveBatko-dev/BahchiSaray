@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+
+{% block title %}Оголошення - Бахча{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h1 class="h2 mb-1">Оголошення</h1>
+    <div class="text-muted">Важливі повідомлення для мешканців</div>
+</div>
+
+<div class="vstack gap-3">
+    {% for announcement in announcements %}
+        <article class="panel p-4 {% if announcement.kind == 'critical' %}critical-item{% endif %}">
+            <div class="d-flex flex-wrap gap-2 justify-content-between mb-2">
+                <span class="status-pill">{{ announcement.get_kind_display }}</span>
+                <span class="text-muted">{{ announcement.published_at }}</span>
+            </div>
+            <h2 class="h4">{{ announcement.title }}</h2>
+            <p class="mb-0">{{ announcement.text|linebreaksbr }}</p>
+        </article>
+    {% empty %}
+        <div class="panel p-4 text-muted">Оголошень поки немає.</div>
+    {% endfor %}
+</div>
+{% endblock %}
