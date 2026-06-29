@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+
+{% block title %}Статус оплати - СТ «Економіст»{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="panel p-4">
+            <h1 class="h3 mb-3">Статус оплати</h1>
+            <dl class="row mb-4">
+                <dt class="col-5">Замовлення</dt>
+                <dd class="col-7">{{ transaction.order_id }}</dd>
+                <dt class="col-5">Ділянка</dt>
+                <dd class="col-7">{{ transaction.plot.number }}</dd>
+                <dt class="col-5">Сума</dt>
+                <dd class="col-7">{{ transaction.amount|floatformat:2 }} UAH</dd>
+                <dt class="col-5">Статус</dt>
+                <dd class="col-7">{{ transaction.get_status_display }}</dd>
+            </dl>
+            {% if transaction.status == 'success' %}
+                <div class="alert alert-success">Оплату підтверджено. Баланс оновлено.</div>
+            {% elif transaction.status == 'failed' %}
+                <div class="alert alert-warning">Оплата не пройшла. Payment не створено.</div>
+            {% else %}
+                <div class="alert alert-info">Очікуємо підтвердження від платіжного провайдера.</div>
+            {% endif %}
+            <a class="btn btn-primary w-100" href="{% url 'finance' %}">Повернутися до фінансів</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

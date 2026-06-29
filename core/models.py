@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Sum
 from django.utils import timezone
@@ -13,6 +14,32 @@ def normalize_phone(phone):
     for char in (' ', '-', '(', ')'):
         phone = phone.replace(char, '')
     return phone
+
+
+METER_PHOTO_ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp'}
+RECEIPT_ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp', 'pdf'}
+MAX_RECEIPT_FILE_SIZE = 20 * 1024 * 1024
+
+
+def uploaded_file_extension(file):
+    name = getattr(file, 'name', '') or ''
+    if '.' not in name:
+        return ''
+    return name.rsplit('.', 1)[1].lower()
+
+
+def validate_meter_photo(file):
+    extension = uploaded_file_extension(file)
+    if extension not in METER_PHOTO_ALLOWED_EXTENSIONS:
+        raise ValidationError('Дозволені формати фото лічильника: jpg, jpeg, png, webp.')
+
+
+def validate_payment_receipt_file(file):
+    extension = uploaded_file_extension(file)
+    if extension not in RECEIPT_ALLOWED_EXTENSIONS:
+        raise ValidationError('Дозволені формати квитанції: jpg, jpeg, png, webp, pdf.')
+    if getattr(file, 'size', 0) > MAX_RECEIPT_FILE_SIZE:
+        raise ValidationError('Максимальний розмір файлу квитанції: 20 МБ.')
 
 
 class UserProfile(models.Model):
@@ -231,6 +258,7 @@ class Payment(models.Model):
         CASH = 'cash', 'Готівка'
         CARD = 'card', 'Картка'
         BANK = 'bank', 'Банк'
+        ONLINE = 'online', 'Онлайн'
         OTHER = 'other', 'Інше'
 
     plot = models.ForeignKey(
@@ -261,6 +289,63 @@ class Payment(models.Model):
 
     def __str__(self):
         return f'{self.plot}: {self.amount} ({self.get_status_display()})'
+
+
+class OnlinePaymentTransaction(models.Model):
+    class Provider(models.TextChoices):
+        LIQPAY = 'liqpay', 'LiqPay'
+        WAYFORPAY = 'wayforpay', 'WayForPay'
+
+    class Status(models.TextChoices):
+        CREATED = 'created', 'Створено'
+        PENDING = 'pending', 'Очікує оплати'
+        SUCCESS = 'success', 'Успішно оплачено'
+        FAILED = 'failed', 'Неуспішна оплата'
+        CANCELED = 'canceled', 'Скасовано'
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='online_payment_transactions',
+        verbose_name='користувач',
+    )
+    plot = models.ForeignKey(
+        Plot,
+        on_delete=models.PROTECT,
+        related_name='online_payment_transactions',
+        verbose_name='ділянка',
+    )
+    accrual = models.ForeignKey(
+        Accrual,
+        on_delete=models.PROTECT,
+        related_name='online_payment_transactions',
+        verbose_name='нарахування',
+    )
+    payment = models.OneToOneField(
+        Payment,
+        on_delete=models.SET_NULL,
+        related_name='online_transaction',
+        verbose_name='створена оплата',
+        null=True,
+        blank=True,
+    )
+    amount = models.DecimalField('сума', max_digits=12, decimal_places=2)
+    provider = models.CharField('провайдер', max_length=20, choices=Provider.choices, default=Provider.LIQPAY)
+    order_id = models.CharField('внутрішній номер замовлення', max_length=80, unique=True)
+    provider_payment_id = models.CharField('ID платежу провайдера', max_length=120, blank=True)
+    status = models.CharField('статус', max_length=20, choices=Status.choices, default=Status.CREATED)
+    created_at = models.DateTimeField('дата створення', auto_now_add=True)
+    paid_at = models.DateTimeField('дата успішної оплати', null=True, blank=True)
+    provider_status = models.CharField('статус провайдера', max_length=80, blank=True)
+    provider_payload = models.JSONField('дані провайдера', default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'онлайн-транзакція'
+        verbose_name_plural = 'онлайн-транзакції'
+
+    def __str__(self):
+        return f'{self.order_id} - {self.amount} UAH'
 
 
 class Meter(models.Model):
@@ -311,7 +396,12 @@ class MeterReading(models.Model):
         blank=True,
     )
     value = models.DecimalField('поточне показання', max_digits=12, decimal_places=2)
-    photo = models.FileField('фото лічильника', upload_to='meter_readings/', blank=True)
+    photo = models.FileField(
+        'фото лічильника',
+        upload_to='meter_readings/',
+        blank=True,
+        validators=[validate_meter_photo],
+    )
     submitted_at = models.DateTimeField('передано', auto_now_add=True)
     status = models.CharField('статус', max_length=20, choices=Status.choices, default=Status.PENDING)
     comment = models.TextField('коментар адміністратора', blank=True)
@@ -348,7 +438,12 @@ class PaymentReceipt(models.Model):
     amount = models.DecimalField('сума оплати', max_digits=12, decimal_places=2)
     paid_at = models.DateField('дата оплати', default=timezone.localdate)
     method = models.CharField('спосіб оплати', max_length=20, choices=Payment.Method.choices, default=Payment.Method.BANK)
-    photo = models.FileField('фото квитанції', upload_to='payment_receipts/', blank=True)
+    photo = models.FileField(
+        'фото квитанції',
+        upload_to='payment_receipts/',
+        blank=True,
+        validators=[validate_payment_receipt_file],
+    )
     comment = models.TextField('коментар', blank=True)
     status = models.CharField('статус', max_length=20, choices=Status.choices, default=Status.PENDING)
     created_at = models.DateTimeField('завантажено', auto_now_add=True)

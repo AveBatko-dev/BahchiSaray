@@ -5,11 +5,20 @@ from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Sum
+from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 
 from .forms import LoginCodeForm, MeterReadingForm, PaymentReceiptForm, PhoneLoginForm
-from .models import Accrual, Announcement, Payment, Plot
+from .models import Accrual, Announcement, OnlinePaymentTransaction, Payment, Plot
+from .online_payments import (
+    OnlinePaymentError,
+    build_liqpay_checkout,
+    create_online_payment_transaction,
+    handle_liqpay_callback,
+)
 from .otp import LoginCodeError, create_and_send_login_code, verify_login_code
 from .sms import SmsSendError
 
@@ -73,6 +82,23 @@ def home_tasks(user, plots):
             'button': 'Перевірити',
         },
     ]
+
+
+def annotate_accruals_for_payment(accruals):
+    accrual_list = list(accruals)
+    accrual_ids = [accrual.id for accrual in accrual_list]
+    paid_ids = set(
+        OnlinePaymentTransaction.objects.filter(
+            accrual_id__in=accrual_ids,
+            status=OnlinePaymentTransaction.Status.SUCCESS,
+        ).values_list('accrual_id', flat=True)
+    )
+    for accrual in accrual_list:
+        accrual.is_online_paid = accrual.id in paid_ids
+        accrual.can_pay_online = (
+            accrual.status == Accrual.Status.ACTIVE and not accrual.is_online_paid
+        )
+    return accrual_list
 
 
 def home(request):
@@ -155,7 +181,7 @@ def dashboard(request):
     context = {
         'plots': plots,
         'balance': balance_for_plots(plots),
-        'latest_accruals': Accrual.objects.filter(plot__in=plots)[:5],
+        'latest_accruals': annotate_accruals_for_payment(Accrual.objects.filter(plot__in=plots)[:5]),
         'latest_payments': Payment.objects.filter(plot__in=plots)[:5],
         'profile_name': display_name(request.user),
     }
@@ -186,10 +212,54 @@ def finance(request):
         'plots': plots,
         'selected_plot': selected_plot,
         'balance': balance_for_plots(plots),
-        'accruals': Accrual.objects.filter(plot__in=filtered_plots),
+        'accruals': annotate_accruals_for_payment(Accrual.objects.filter(plot__in=filtered_plots)),
         'payments': Payment.objects.filter(plot__in=filtered_plots),
     }
     return render(request, 'core/finance.html', context)
+
+
+@login_required
+@require_POST
+def start_online_payment(request, accrual_id):
+    accrual = get_object_or_404(Accrual.objects.select_related('plot'), pk=accrual_id)
+    if not accessible_plots(request.user).filter(pk=accrual.plot_id).exists():
+        return HttpResponseBadRequest('Нарахування недоступне.')
+    try:
+        transaction_obj = create_online_payment_transaction(request.user, accrual)
+        checkout = build_liqpay_checkout(transaction_obj, request)
+    except OnlinePaymentError as exc:
+        messages.error(request, str(exc))
+        return redirect('finance')
+    return render(
+        request,
+        'core/online_payment_checkout.html',
+        {'transaction': transaction_obj, 'checkout': checkout},
+    )
+
+
+@login_required
+def online_payment_status(request, order_id):
+    transaction_obj = get_object_or_404(
+        OnlinePaymentTransaction.objects.select_related('plot', 'accrual'),
+        order_id=order_id,
+    )
+    if transaction_obj.user_id != request.user.id and not request.user.is_staff:
+        return HttpResponseBadRequest('Платіж недоступний.')
+    return render(request, 'core/online_payment_status.html', {'transaction': transaction_obj})
+
+
+@csrf_exempt
+@require_POST
+def liqpay_callback(request):
+    data = request.POST.get('data', '')
+    signature = request.POST.get('signature', '')
+    if not data or not signature:
+        return HttpResponseBadRequest('missing data')
+    try:
+        handle_liqpay_callback(data, signature)
+    except (OnlinePaymentError, OnlinePaymentTransaction.DoesNotExist) as exc:
+        return HttpResponseBadRequest(str(exc))
+    return HttpResponse('ok')
 
 
 @login_required

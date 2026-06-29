@@ -2,10 +2,26 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from .models import Accrual, LoginCode, Payment, Plot, PlotMembership, UserProfile
+from .models import (
+    Accrual,
+    LoginCode,
+    MAX_RECEIPT_FILE_SIZE,
+    MeterReading,
+    OnlinePaymentTransaction,
+    Payment,
+    PaymentReceipt,
+    Plot,
+    PlotMembership,
+    UserProfile,
+    validate_meter_photo,
+    validate_payment_receipt_file,
+)
+from .online_payments import build_liqpay_checkout, encode_liqpay_data, liqpay_signature
 
 
 class BalanceTests(TestCase):
@@ -31,6 +47,35 @@ class BalanceTests(TestCase):
 
         self.assertEqual(plot.balance, Decimal('-300.00'))
         self.assertEqual(plot.balance_state, 'Заборгованість')
+
+
+class UploadValidationTests(TestCase):
+    def test_meter_photo_allows_only_supported_image_extensions(self):
+        for filename in ['meter.jpg', 'meter.jpeg', 'meter.png', 'meter.webp']:
+            validate_meter_photo(SimpleUploadedFile(filename, b'file'))
+
+        with self.assertRaises(ValidationError):
+            validate_meter_photo(SimpleUploadedFile('meter.pdf', b'file'))
+        with self.assertRaises(ValidationError):
+            validate_meter_photo(SimpleUploadedFile('meter.gif', b'file'))
+
+    def test_receipt_allows_images_and_pdf_up_to_20_mb(self):
+        for filename in ['receipt.jpg', 'receipt.jpeg', 'receipt.png', 'receipt.webp', 'receipt.pdf']:
+            validate_payment_receipt_file(SimpleUploadedFile(filename, b'file'))
+
+        with self.assertRaises(ValidationError):
+            validate_payment_receipt_file(SimpleUploadedFile('receipt.docx', b'file'))
+
+        oversized = SimpleUploadedFile('receipt.pdf', b'0' * (MAX_RECEIPT_FILE_SIZE + 1))
+        with self.assertRaises(ValidationError):
+            validate_payment_receipt_file(oversized)
+
+    def test_file_validators_are_attached_to_models(self):
+        meter_validators = MeterReading._meta.get_field('photo').validators
+        receipt_validators = PaymentReceipt._meta.get_field('photo').validators
+
+        self.assertIn(validate_meter_photo, meter_validators)
+        self.assertIn(validate_payment_receipt_file, receipt_validators)
 
 
 @override_settings(
@@ -157,6 +202,173 @@ class AccessAndLoginTests(TestCase):
         self.assertIn('/admin/core/userprofile/', content)
         self.assertIn('/admin/core/plot/', content)
         self.assertIn('/admin/core/plotmembership/', content)
+        self.assertIn('/admin/core/onlinepaymenttransaction/', content)
         self.assertNotIn('/admin/core/payment/', content)
         self.assertNotIn('/admin/core/accrual/', content)
         self.assertNotIn('/admin/core/logincode/', content)
+
+
+@override_settings(
+    LIQPAY_PUBLIC_KEY='public',
+    LIQPAY_PRIVATE_KEY='private',
+    SITE_URL='https://example.test',
+)
+class OnlinePaymentTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='owner')
+        self.user.set_unusable_password()
+        self.user.save()
+        UserProfile.objects.create(
+            user=self.user,
+            last_name='Петренко',
+            first_name='Олена',
+            phone='+380501111111',
+        )
+        self.plot = Plot.objects.create(number='21', area=Decimal('8.50'), owner_name='Петренко')
+        PlotMembership.objects.create(user=self.user, plot=self.plot)
+        self.accrual = Accrual.objects.create(
+            plot=self.plot,
+            title='Цільовий внесок',
+            amount=Decimal('450.00'),
+        )
+
+    def liqpay_callback_payload(self, transaction_obj, **overrides):
+        payload = {
+            'order_id': transaction_obj.order_id,
+            'amount': str(transaction_obj.amount),
+            'currency': 'UAH',
+            'status': 'success',
+            'payment_id': 'liqpay-123',
+        }
+        payload.update(overrides)
+        data = encode_liqpay_data(payload)
+        return {'data': data, 'signature': liqpay_signature(data)}
+
+    def test_unpaid_accrual_has_pay_button_in_dashboard_and_finance(self):
+        self.client.force_login(self.user)
+        pay_url = reverse('start_online_payment', args=[self.accrual.id])
+
+        dashboard = self.client.get(reverse('dashboard'))
+        finance = self.client.get(reverse('finance'))
+
+        self.assertContains(dashboard, pay_url)
+        self.assertContains(finance, pay_url)
+
+    def test_start_online_payment_creates_transaction_and_checkout_form(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(reverse('start_online_payment', args=[self.accrual.id]))
+
+        self.assertEqual(response.status_code, 200)
+        transaction_obj = OnlinePaymentTransaction.objects.get(accrual=self.accrual)
+        self.assertEqual(transaction_obj.amount, self.accrual.amount)
+        self.assertEqual(transaction_obj.provider, OnlinePaymentTransaction.Provider.LIQPAY)
+        self.assertContains(response, 'www.liqpay.ua/api/3/checkout')
+        checkout = build_liqpay_checkout(transaction_obj, response.wsgi_request)
+        self.assertContains(response, checkout['data'])
+        self.assertContains(response, checkout['signature'])
+
+    def test_repeated_start_reuses_pending_transaction(self):
+        self.client.force_login(self.user)
+
+        self.client.post(reverse('start_online_payment', args=[self.accrual.id]))
+        self.client.post(reverse('start_online_payment', args=[self.accrual.id]))
+
+        self.assertEqual(OnlinePaymentTransaction.objects.filter(accrual=self.accrual).count(), 1)
+
+    def test_successful_callback_creates_confirmed_payment_once(self):
+        self.client.force_login(self.user)
+        self.client.post(reverse('start_online_payment', args=[self.accrual.id]))
+        transaction_obj = OnlinePaymentTransaction.objects.get(accrual=self.accrual)
+        callback_payload = self.liqpay_callback_payload(transaction_obj)
+
+        first_response = self.client.post(reverse('liqpay_callback'), callback_payload)
+        second_response = self.client.post(reverse('liqpay_callback'), callback_payload)
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        transaction_obj.refresh_from_db()
+        self.assertEqual(transaction_obj.status, OnlinePaymentTransaction.Status.SUCCESS)
+        self.assertIsNotNone(transaction_obj.paid_at)
+        self.assertEqual(Payment.objects.count(), 1)
+        payment = Payment.objects.get()
+        self.assertEqual(payment.status, Payment.Status.CONFIRMED)
+        self.assertEqual(payment.method, Payment.Method.ONLINE)
+        self.assertEqual(payment.amount, self.accrual.amount)
+
+    def test_second_success_transaction_for_same_accrual_does_not_create_second_payment(self):
+        first_transaction = OnlinePaymentTransaction.objects.create(
+            user=self.user,
+            plot=self.plot,
+            accrual=self.accrual,
+            amount=self.accrual.amount,
+            provider=OnlinePaymentTransaction.Provider.LIQPAY,
+            order_id='first-order',
+            status=OnlinePaymentTransaction.Status.PENDING,
+        )
+        second_transaction = OnlinePaymentTransaction.objects.create(
+            user=self.user,
+            plot=self.plot,
+            accrual=self.accrual,
+            amount=self.accrual.amount,
+            provider=OnlinePaymentTransaction.Provider.LIQPAY,
+            order_id='second-order',
+            status=OnlinePaymentTransaction.Status.PENDING,
+        )
+
+        first_response = self.client.post(
+            reverse('liqpay_callback'),
+            self.liqpay_callback_payload(first_transaction, payment_id='first-payment'),
+        )
+        second_response = self.client.post(
+            reverse('liqpay_callback'),
+            self.liqpay_callback_payload(second_transaction, payment_id='second-payment'),
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        first_transaction.refresh_from_db()
+        second_transaction.refresh_from_db()
+        self.assertEqual(first_transaction.status, OnlinePaymentTransaction.Status.SUCCESS)
+        self.assertEqual(second_transaction.status, OnlinePaymentTransaction.Status.FAILED)
+        self.assertEqual(Payment.objects.count(), 1)
+
+    def test_failed_callback_does_not_create_payment(self):
+        self.client.force_login(self.user)
+        self.client.post(reverse('start_online_payment', args=[self.accrual.id]))
+        transaction_obj = OnlinePaymentTransaction.objects.get(accrual=self.accrual)
+
+        response = self.client.post(
+            reverse('liqpay_callback'),
+            self.liqpay_callback_payload(transaction_obj, status='failure'),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        transaction_obj.refresh_from_db()
+        self.assertEqual(transaction_obj.status, OnlinePaymentTransaction.Status.FAILED)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    def test_callback_rejects_wrong_signature_amount_and_currency(self):
+        self.client.force_login(self.user)
+        self.client.post(reverse('start_online_payment', args=[self.accrual.id]))
+        transaction_obj = OnlinePaymentTransaction.objects.get(accrual=self.accrual)
+
+        wrong_signature = self.liqpay_callback_payload(transaction_obj)
+        wrong_signature['signature'] = 'bad'
+        wrong_amount = self.liqpay_callback_payload(transaction_obj, amount='1.00')
+        wrong_currency = self.liqpay_callback_payload(transaction_obj, currency='USD')
+
+        self.assertEqual(self.client.post(reverse('liqpay_callback'), wrong_signature).status_code, 400)
+        self.assertEqual(self.client.post(reverse('liqpay_callback'), wrong_amount).status_code, 400)
+        self.assertEqual(self.client.post(reverse('liqpay_callback'), wrong_currency).status_code, 400)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    def test_successful_online_payment_hides_pay_button(self):
+        self.client.force_login(self.user)
+        self.client.post(reverse('start_online_payment', args=[self.accrual.id]))
+        transaction_obj = OnlinePaymentTransaction.objects.get(accrual=self.accrual)
+        self.client.post(reverse('liqpay_callback'), self.liqpay_callback_payload(transaction_obj))
+
+        response = self.client.get(reverse('finance'))
+
+        self.assertNotContains(response, reverse('start_online_payment', args=[self.accrual.id]))

@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import Group, User
 from django.core.exceptions import ObjectDoesNotExist
 
-from .models import Plot, PlotMembership, UserProfile
+from .models import OnlinePaymentTransaction, Plot, PlotMembership, UserProfile
 
 
 admin.site.site_header = 'Адмінка СТ «Економіст»'
@@ -115,4 +115,33 @@ class PlotMembershipAdmin(admin.ModelAdmin):
         'user__profile__middle_name',
         'user__profile__phone',
         'plot__number',
+    )
+
+
+@admin.register(OnlinePaymentTransaction)
+class OnlinePaymentTransactionAdmin(admin.ModelAdmin):
+    list_display = ('user', 'plot', 'amount', 'status', 'provider', 'created_at')
+    list_filter = ('status', 'provider', 'created_at')
+    search_fields = (
+        'order_id',
+        'provider_payment_id',
+        'user__profile__last_name',
+        'user__profile__first_name',
+        'user__profile__phone',
+        'plot__number',
+    )
+    readonly_fields = (
+        'user',
+        'plot',
+        'accrual',
+        'payment',
+        'amount',
+        'provider',
+        'order_id',
+        'provider_payment_id',
+        'status',
+        'created_at',
+        'paid_at',
+        'provider_status',
+        'provider_payload',
     )

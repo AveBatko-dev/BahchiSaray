@@ -149,3 +149,8 @@ LOGIN_CODE_TTL_MINUTES = int(os.environ.get('LOGIN_CODE_TTL_MINUTES', '5'))
 LOGIN_CODE_RESEND_COOLDOWN_SECONDS = int(os.environ.get('LOGIN_CODE_RESEND_COOLDOWN_SECONDS', '60'))
 LOGIN_CODE_DAILY_LIMIT = int(os.environ.get('LOGIN_CODE_DAILY_LIMIT', '5'))
 LOGIN_CODE_MAX_ATTEMPTS = int(os.environ.get('LOGIN_CODE_MAX_ATTEMPTS', '3'))
+
+SITE_URL = os.environ.get('SITE_URL', '')
+LIQPAY_PUBLIC_KEY = os.environ.get('LIQPAY_PUBLIC_KEY', '')
+LIQPAY_PRIVATE_KEY = os.environ.get('LIQPAY_PRIVATE_KEY', '')
+LIQPAY_CHECKOUT_URL = os.environ.get('LIQPAY_CHECKOUT_URL', 'https://www.liqpay.ua/api/3/checkout')

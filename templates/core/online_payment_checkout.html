@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+
+{% block title %}Оплата - СТ «Економіст»{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="panel p-4">
+            <h1 class="h3 mb-3">Перехід до оплати</h1>
+            <p class="text-muted">
+                Зараз ви перейдете на офіційну сторінку LiqPay. Сайт СТ «Економіст» не приймає та не зберігає дані банківської картки.
+            </p>
+            <dl class="row mb-4">
+                <dt class="col-5">Ділянка</dt>
+                <dd class="col-7">{{ transaction.plot.number }}</dd>
+                <dt class="col-5">Нарахування</dt>
+                <dd class="col-7">{{ transaction.accrual.title }}</dd>
+                <dt class="col-5">Сума</dt>
+                <dd class="col-7">{{ transaction.amount|floatformat:2 }} UAH</dd>
+            </dl>
+            <form method="post" action="{{ checkout.checkout_url }}" id="liqpayCheckoutForm">
+                <input type="hidden" name="data" value="{{ checkout.data }}">
+                <input type="hidden" name="signature" value="{{ checkout.signature }}">
+                <button class="btn btn-primary w-100" type="submit">Перейти до LiqPay</button>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+    document.getElementById('liqpayCheckoutForm').submit();
+</script>
+{% endblock %}
